@@ -96,6 +96,26 @@ def get_exclusive_wp(tagger, wp, category):
         function=tagger_mask_exclusive_wp
     )
 
+def tagger_window_mask(events, params, **kwargs):
+    '''Mask selecting events with a tagger score in a half-open window [low, high).
+    "-Inf"/"Inf" sentinels leave that side of the window open.'''
+    low = params["low"]
+    high = params["high"]
+    score = events.FatJetGood[params["tagger"]]
+
+    if low == "-Inf" and high == "Inf":
+        mask = ak.ones_like(score, dtype=bool)
+    elif low == "-Inf":
+        mask = (score < high)
+    elif high == "Inf":
+        mask = (score >= low)
+    else:
+        mask = (score >= low) & (score < high)
+
+    assert not ak.any(ak.is_none(mask, axis=1)), f"None in tagger_window_mask\n{score[ak.is_none(mask, axis=1)]}"
+
+    return ak.where(~ak.is_none(mask, axis=1), mask, False)
+
 def get_inclusive_wp(tagger, wp, category, fail_mode="lower-upper"):
     return Cut(
         name=f"{tagger}_{category}",
@@ -104,28 +124,39 @@ def get_inclusive_wp(tagger, wp, category, fail_mode="lower-upper"):
         collection="FatJetGood"
     )
 
-# def two_jet_ptmsd(events, params, **kwargs):
-#     '''Mask to select events with at least one jet satisfying the pt, msd requirements
-#     and events with exactly two jets satisfying the pt, msd requirements.'''
-# 
-#     mask_one_jet = (
-#         ak.any(events.FatJetGood.pt > params["pt"], axis=1) &
-#         ak.any(events.FatJetGood.msoftdrop > params["msd"], axis=1)
-#     )
-# 
-#     mask_two_jets = (
-#         ak.all(events.FatJetGood.pt > params["pt"], axis=1) &
-#         ak.all(events.FatJetGood.msoftdrop > params["msd"], axis=1)
-#     )
-# 
-#     fatjet_mutag = (
-#         ( (events.nFatJetGood >= 1) & mask_one_jet ) |
-#         ( (events.nFatJetGood == 2) & mask_two_jets )
-#     )
-# 
-#     assert not ak.any(ak.is_none(fatjet_mutag)), f"None in mutag\n{fatjet_mutag}"
-# 
-#     return fatjet_mutag
+def get_tagger_window(tagger, low, high, name=None):
+    if name == None:
+        name = f"{tagger}_{low}to{high}"
+    return Cut(
+        name=name,
+        params={"tagger": tagger, "low": low, "high": high},
+        function=tagger_window_mask,
+        collection="FatJetGood"
+    )
+
+def twojets_ptmsd(events, params, **kwargs):
+    '''Mask to select events with at least one jet satisfying the pt, msd requirements
+    and events with exactly two jets satisfying the pt, msd requirements.'''
+
+    mask_one_jet = (
+        ak.any(events.FatJetGood.pt > params["pt"], axis=1) &
+        ak.any(events.FatJetGood.msoftdrop > params["msd"], axis=1)
+    )
+
+    mask_two_jets = (
+        ak.all(events.FatJetGood.pt > params["pt"], axis=1) &
+        ak.all(events.FatJetGood.msoftdrop > params["msd"], axis=1)
+    )
+
+    fatjet_mutag = (
+        ( (events.nFatJetGood >= 1) & mask_one_jet ) |
+        ( (events.nFatJetGood == 2) & mask_two_jets )
+    )
+
+    assert not ak.any(ak.is_none(fatjet_mutag)), f"None in mutag\n{fatjet_mutag}"
+
+    return fatjet_mutag
+
 def mutag_fatjet_matched(events, params, **kwargs):
     # Select jets with a minimum number of matched muons
     mask_good_jets = (events.FatJetGood.nMuonGoodMatchedToFatJetGood >= params["nmu"])
@@ -278,6 +309,35 @@ def ptmsd_window(events, params, **kwargs):
     mask = (events.FatJetGood.pt > params["pt"]) & (events.FatJetGood.msoftdrop > params["msd_min"]) & (events.FatJetGood.msoftdrop < params["msd_max"])
 
     assert not ak.any(ak.is_none(mask, axis=1)), f"None in ptmsd_window\n{events.FatJetGood.pt[ak.is_none(mask, axis=1)]}"
+
+    return ak.where(~ak.is_none(mask, axis=1), mask, False)
+
+def globalParT3massbin(events, params, **kwargs):
+    # Mask to select events with a fatjet with GloParT regressed mass in a given window
+    if params["mass_max"] == 'Inf':
+        mask = (events.FatJetGood.globalParT3_mass >= params["mass_min"])
+    elif type(params["mass_max"]) != str:
+        mask = (events.FatJetGood.globalParT3_mass >= params["mass_min"]) & (events.FatJetGood.globalParT3_mass < params["mass_max"])
+    else:
+        raise NotImplementedError
+
+    assert not ak.any(ak.is_none(mask, axis=1)), f"None in globalParT3massbin\n{events.nJetGood[ak.is_none(mask, axis=1)]}"
+
+    return ak.where(~ak.is_none(mask, axis=1), mask, False)
+
+def ptglopartmass(events, params, **kwargs):
+    # Mask to select events with a fatjet with minimum GloParT regressed mass
+    mask = (events.FatJetGood.pt > params["pt"]) & (events.FatJetGood.globalParT3_mass > params["mass"])
+
+    assert not ak.any(ak.is_none(mask, axis=1)), f"None in ptglopartmass\n{events.FatJetGood.pt[ak.is_none(mask, axis=1)]}"
+
+    return ak.where(~ak.is_none(mask, axis=1), mask, False)
+
+def ptglopartmass_window(events, params, **kwargs):
+    # Mask to select events with a fatjet with minimum and maximum GloParT regressed mass
+    mask = (events.FatJetGood.pt > params["pt"]) & (events.FatJetGood.globalParT3_mass > params["mass_min"]) & (events.FatJetGood.globalParT3_mass < params["mass_max"])
+
+    assert not ak.any(ak.is_none(mask, axis=1)), f"None in ptglopartmass_window\n{events.FatJetGood.pt[ak.is_none(mask, axis=1)]}"
 
     return ak.where(~ak.is_none(mask, axis=1), mask, False)
 

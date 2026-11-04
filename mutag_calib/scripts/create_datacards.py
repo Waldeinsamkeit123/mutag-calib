@@ -466,7 +466,7 @@ def add_Madgraph_systematic(histogram_logsumSVmass_tau21):
         mg_vals = mg_total.values(flow=True)
         mu_int = mu_vals.sum()
         mg_int = mg_vals.sum()
-        scale = mu_int / mg_int
+        scale = mu_int / mg_int if mg_int > 0 else 1.0
         mg_vals_scaled = mg_vals * scale
         mask = mu_vals > 1e-9
         ratio = np.ones_like(mu_vals)
@@ -1039,6 +1039,10 @@ def main():
                         help="If set, merge consecutive bins of each channel until the total MC (nominal tau21 cut) "
                              "has a relative stat. uncertainty <= this value. Applied to all processes, data and tau21 points. "
                              "Also used for the bin groups of the signal/proxy shape ratio (0.3 if not set).")
+    parser.add_argument("--category-prefix", default="msd",
+                       help="Only build categories whose name starts with this prefix. "
+                            "Default 'msd' selects the softdrop-mass categories; use "
+                            "'globalParT3mass' for the GloParT workflow.")
     parser.add_argument("--verbose", "-v", action="store_true", default=False, help="Enable verbose output")
     args = parser.parse_args()
 
@@ -1052,10 +1056,14 @@ def main():
     # plot_tau21_mu_vs_mg(hist_tau21, cat="pt300msd80to170")
     cutflow = output["cutflow"]
     datasets_metadata = output["datasets_metadata"]
-    if not args.filter_category:
-        categories = [cat for cat in cutflow.keys() if cat.startswith('msd')]
-    else:
-        categories = [cat for cat in cutflow.keys() if cat.startswith('msd') and args.filter_category in cat]
+    categories = [cat for cat in cutflow.keys() if cat.startswith(args.category_prefix)]
+    if not categories:
+        raise SystemExit(
+            f"No categories start with '{args.category_prefix}'. Available: "
+            f"{sorted({c.split('_')[0] for c in cutflow.keys()})}"
+        )
+    if args.filter_category:
+        categories = [cat for cat in categories if args.filter_category in cat]
 
     
     # Categorize samples
