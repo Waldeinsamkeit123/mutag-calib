@@ -147,7 +147,8 @@ cfg = Configurator(
         # "pt300msd80to170" : [get_ptmsd_window(300., 80., 170.)],
         # "pt250msd50mreg50to200bbtag05": [get_ptmsd(250., 50.), get_mregbin(50., 200.), get_tagger_pass(["btag"], 0.05)],
         # "pt250msd50mreg50to200bbtag65": [get_ptmsd(250., 50.), get_mregbin(50., 200.), get_tagger_pass(["btag"], 0.65)],
-        "pt250msd50mreg50to200": [get_ptmsd(250., 50.), get_mregbin(50., 200.)],
+        # "pt250msd50mreg50to200": [get_ptmsd(250., 50.), get_mregbin(50., 200.)],
+        "pt250msd100to150mreg50to200": [get_ptmsd_window(250., 100., 150.), get_mregbin(50., 200.)],
     },
 
     weights_classes = common_weights + [SF_trigger_prescale],
