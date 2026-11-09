@@ -37,6 +37,10 @@ TAU21_NOMINAL = 0.30
 TAU21_VAR_DOWN = 0.15
 TAU21_VAR_UP = 1.0
 
+# Floor for shape-systematic templates with a zero integral: combine's
+# getExtraNorm() requires a strictly positive one.
+EPS_FLOOR = 1e-6
+
 
 def merge_low_stat_bins(values_list, variances_list, max_relerr):
     """Group consecutive bins so that, for every (values, variances) pair, each group has a
@@ -534,11 +538,11 @@ def add_Madgraph_systematic(histogram_logsumSVmass_tau21):
 def add_Madgraph_systematic_1d(histo_1d, cat, integral_eps=1e-6, ratio_source=None):
     """Function to add the Madgraph systematic uncertainty to the histogram.
 
-    integral_eps: below this integral (summed events in a given cat/dataset),
-    a variation is treated as "no data" and the systematic is set to have
-    no effect (up == down == nominal) instead of being renormalized, which
-    is what produces `nan`/`inf` when the process is (almost) empty in a
-    given category.
+    integral_eps: a Madgraph total, or an Up/Down integral, at or below this
+    value is treated as empty. An empty Madgraph total keeps scale = 1 instead
+    of dividing by ~0. An empty Up/Down template is not renormalized; every
+    bin is set to EPS_FLOOR instead, so the ratio integral(var)/integral(nom)
+    that combine takes stays finite and strictly positive.
     """
     if ratio_source is None:
         ratio_source = histo_1d
@@ -568,20 +572,22 @@ def add_Madgraph_systematic_1d(histo_1d, cat, integral_eps=1e-6, ratio_source=No
         mu_vals = mu_total.values(flow=True)
         mg_vals = mg_total.values(flow=True)
 
+        # QCD_Madgraph can be empty for this flavor while QCD_MuEnriched is not;
+        # a 0-division here reaches the stored shape as nan ("Bogus norm nan").
         mu_sum = mu_vals.sum()
         mg_sum = mg_vals.sum()
-        if mu_sum <= integral_eps or mg_sum <= integral_eps:
-            print(f"Skipping flavor {flav} in cat {cat}: MuEnriched or Madgraph "
-                  f"total is ~0 (mu_sum={mu_sum}, mg_sum={mg_sum})")
-            ratio = None  # signal "no meaningful ratio" below
-        else:
+        if mg_sum > integral_eps:
             scale = mu_sum / mg_sum
-            mg_vals_scaled = mg_vals * scale
-            mask = mu_vals > 1e-9
-            ratio = np.ones_like(mu_vals)
-            ratio[mask] = mg_vals_scaled[mask] / mu_vals[mask]
-            ratio = np.clip(ratio, 0, 2)
-            ratio = np.nan_to_num(ratio, nan=1.0, posinf=2.0, neginf=0.0)
+        else:
+            print(f"Warning: Madgraph total ~0 for flavor {flav} in cat {cat} "
+                  f"(mu_sum={mu_sum}, mg_sum={mg_sum}), using scale = 1")
+            scale = 1.0
+        mg_vals_scaled = mg_vals * scale
+        mask = mu_vals > 1e-9
+        ratio = np.ones_like(mu_vals)
+        ratio[mask] = mg_vals_scaled[mask] / mu_vals[mask]
+        ratio = np.clip(ratio, 0, 2)
+        ratio = np.nan_to_num(ratio, nan=1.0, posinf=2.0, neginf=0.0)
 
         for dataset, h_mu in mu_datasets.items():
             print(f"\ndataset: {dataset}")
@@ -608,19 +614,6 @@ def add_Madgraph_systematic_1d(histo_1d, cat, integral_eps=1e-6, ratio_source=No
             up_view = new_hist.view(flow=True)[cat_idx, up_idx, :]
             down_view = new_hist.view(flow=True)[cat_idx, down_idx, :]
 
-            nom_integral = np.nansum(nom_view["value"])
-
-            if ratio is None or nom_integral <= integral_eps:
-                # Nothing meaningful to reweight for this dataset/category:
-                # make the systematic a no-op (up == down == nominal) instead
-                # of dividing by ~0.
-                up_view["value"] = nom_view["value"]
-                up_view["variance"] = nom_view["variance"]
-                down_view["value"] = nom_view["value"]
-                down_view["variance"] = nom_view["variance"]
-                histo_1d[mu_name][dataset] = new_hist
-                continue
-
             up_view["value"] = nom_view["value"] * ratio
             up_view["variance"] = nom_view["variance"] * ratio**2
             down_view["value"] = nom_view["value"] * (2 - ratio)
@@ -636,18 +629,20 @@ def add_Madgraph_systematic_1d(histo_1d, cat, integral_eps=1e-6, ratio_source=No
                 new_hist.view(flow=True)[cat_idx, up_idx, :]["value"] *= up_factor
                 new_hist.view(flow=True)[cat_idx, up_idx, :]["variance"] *= up_factor**2
             else:
-                print("Warning: up_integral ~ 0, skipping renormalization, forcing up = nominal")
-                up_view["value"] = nom_view["value"]
-                up_view["variance"] = nom_view["variance"]
+                # Genuinely empty, not corrupted: this flavor has ~0 yield here and
+                # its rate is frozen, so the floored shape affects no fit result.
+                print(f"Warning: up_integral ~ 0 for cat={cat}, flooring Up shape to epsilon")
+                up_view["value"] = EPS_FLOOR
+                up_view["variance"] = EPS_FLOOR
 
             if down_integral > integral_eps:
                 down_factor = nominal_integral / down_integral
                 new_hist.view(flow=True)[cat_idx, down_idx, :]["value"] *= down_factor
                 new_hist.view(flow=True)[cat_idx, down_idx, :]["variance"] *= down_factor**2
             else:
-                print("Warning: down_integral ~ 0, skipping renormalization, forcing down = nominal")
-                down_view["value"] = nom_view["value"]
-                down_view["variance"] = nom_view["variance"]
+                print(f"Warning: down_integral ~ 0 for cat={cat}, flooring Down shape to epsilon")
+                down_view["value"] = EPS_FLOOR
+                down_view["variance"] = EPS_FLOOR
 
             # Final belt-and-braces: kill any nan/inf that could still have
             # crept in (e.g. from earlier variations copied via `current_vars`).
